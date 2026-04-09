@@ -15,9 +15,10 @@ set PROJECT_DIR=%SCRIPT_DIR%..
 set SRC=%PROJECT_DIR%\src\backend\geotag.py
 set OUT=%PROJECT_DIR%\dist_pyinstaller
 set WORK=%PROJECT_DIR%\dist_pyinstaller\_build_work
-set PYINSTALLER=%APPDATA%\Python\Python314\Scripts\pyinstaller.exe
 
-%PYINSTALLER% ^
+REM PyInstaller is invoked via python -m PyInstaller for portability (works on CI and locally)
+
+python -m PyInstaller ^
   --onefile ^
   --name geotag ^
   --distpath "%OUT%" ^

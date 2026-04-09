@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: pip install pyinstaller pymavlink piexif Pillow
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Build Next.js
+        run: npx next build
+
+      - name: Obfuscate Electron main/preload
+        run: node scripts/obfuscate.js
+
+      - name: Build Python executable (PyInstaller)
+        run: scripts\build-pyinstaller.bat
+        shell: cmd
+
+      - name: Build Electron portable .exe
+        run: npx electron-builder --win --config electron-builder.prod.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Apogee ${{ github.ref_name }}
+          files: dist_latest/Apogee.exe
+          generate_release_notes: true
