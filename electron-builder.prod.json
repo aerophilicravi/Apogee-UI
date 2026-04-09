@@ -1,0 +1,23 @@
+{
+  "appId": "com.apogee.app",
+  "productName": "Apogee",
+  "directories": {
+    "output": "dist_latest"
+  },
+  "files": [
+    "package.json",
+    { "from": "obfuscated", "filter": ["main.js", "preload.js"] },
+    "out/**/*"
+  ],
+  "extraResources": [
+    {
+      "from": "dist_pyinstaller",
+      "to": "backend",
+      "filter": ["geotag.exe"]
+    }
+  ],
+  "win": {
+    "target": "portable",
+    "icon": "public/favicon.ico"
+  }
+}

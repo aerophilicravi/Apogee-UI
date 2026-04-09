@@ -1,0 +1,21 @@
+# Dependency folders (The biggest token wasters)
+node_modules/
+venv/
+env/
+
+# Build outputs (AI doesn't need to read compiled code)
+dist/
+dist_latest
+build/
+out/
+
+# Logs and temporary files
+*.log
+.cache/
+tmp/
+
+# Media and binary files
+*.png
+*.jpg
+*.pdf
+*.exe
