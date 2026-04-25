@@ -17,11 +17,18 @@ const createWindow = async () => {
     }
   })
 
-  // Remove the top menu ribbon (File, Edit, View, etc.)
+  // Remove the top menu ribbon
   win.setMenuBarVisibility(false)
   Menu.setApplicationMenu(null)
 
-  await loadURL(win)
+  if (!app.isPackaged) {
+    // Development: Load from local dev server
+    win.loadURL('http://localhost:3000')
+    win.webContents.openDevTools()
+  } else {
+    // Production: Load from 'out' directory
+    await loadURL(win)
+  }
 }
 
 app.whenReady().then(() => {

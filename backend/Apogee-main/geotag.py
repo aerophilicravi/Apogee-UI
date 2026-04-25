@@ -10,6 +10,7 @@ import subprocess
 import concurrent.futures
 import multiprocessing
 import time
+import csv
 
 # --- AUTO-INSTALLER FOR REQUIRED PACKAGES ---
 def install_package(package_name):
@@ -111,10 +112,11 @@ def parse_bin_log(bin_file):
     mlog = mavutil.mavlink_connection(bin_file)
     gps_data = []
     cam_data = []
+    att_data = []
     
     print(f"Parsing {os.path.basename(bin_file)}...")
     while True:
-        msg = mlog.recv_match(type=['GPS', 'CAM'], blocking=False)
+        msg = mlog.recv_match(type=['GPS', 'CAM', 'ATT'], blocking=False)
         if msg is None:
             break
             
@@ -147,6 +149,10 @@ def parse_bin_log(bin_file):
             lng = get_field(msg, ['Lng'])
             alt = get_field(msg, ['Alt'])
             
+            roll = get_field(msg, ['Roll', 'roll'])
+            pitch = get_field(msg, ['Pitch', 'pitch'])
+            yaw = get_field(msg, ['Yaw', 'yaw'])
+            
             dt = None
             if gwk is not None and gms is not None:
                 dt = get_gps_time(gwk, gms)
@@ -156,8 +162,25 @@ def parse_bin_log(bin_file):
                 'time': dt,
                 'lat': lat,
                 'lng': lng,
-                'alt': alt
+                'alt': alt,
+                'roll': roll,
+                'pitch': pitch,
+                'yaw': yaw
             })
+            
+        elif msg_type == 'ATT':
+            time_us = get_field(msg, ['TimeUS'])
+            roll = get_field(msg, ['Roll', 'roll'])
+            pitch = get_field(msg, ['Pitch', 'pitch'])
+            yaw = get_field(msg, ['Yaw', 'yaw'])
+            
+            if time_us is not None:
+                att_data.append({
+                    'TimeUS': time_us,
+                    'roll': float(roll) if roll is not None else 0.0,
+                    'pitch': float(pitch) if pitch is not None else 0.0,
+                    'yaw': float(yaw) if yaw is not None else 0.0
+                })
             
     # Interpolate missing data for CAM messages using GPS data
     for cam in cam_data:
@@ -184,7 +207,7 @@ def parse_bin_log(bin_file):
     # Filter out CAM messages that still don't have a time or alt
     cam_data = [c for c in cam_data if c['time'] is not None and c['alt'] is not None]
             
-    return gps_data, cam_data
+    return gps_data, cam_data, att_data
 
 def interpolate_gps(gps_data, target_time):
     # Find bracketing GPS messages
@@ -210,8 +233,77 @@ def interpolate_gps(gps_data, target_time):
     lat = before['lat'] + (after['lat'] - before['lat']) * ratio
     lng = before['lng'] + (after['lng'] - before['lng']) * ratio
     alt = before['alt'] + (after['alt'] - before['alt']) * ratio
+    time_us = before['TimeUS'] + (after['TimeUS'] - before['TimeUS']) * ratio
     
-    return {'lat': lat, 'lng': lng, 'alt': alt}
+    return {'lat': lat, 'lng': lng, 'alt': alt, 'TimeUS': time_us}
+
+import bisect
+
+def interpolate_att(att_data, att_keys, target_time_us):
+    if not att_data:
+        return {'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0}
+        
+    i = bisect.bisect_right(att_keys, target_time_us)
+    
+    if i == 0:
+        return att_data[0]
+    if i == len(att_data):
+        return att_data[-1]
+        
+    before = att_data[i-1]
+    after = att_data[i]
+    
+    dt_total = after['TimeUS'] - before['TimeUS']
+    if dt_total == 0:
+        return before
+        
+    ratio = (target_time_us - before['TimeUS']) / dt_total
+    
+    roll = before['roll'] + (after['roll'] - before['roll']) * ratio
+    pitch = before['pitch'] + (after['pitch'] - before['pitch']) * ratio
+    
+    dyaw = after['yaw'] - before['yaw']
+    if dyaw > 180:
+        dyaw -= 360
+    elif dyaw < -180:
+        dyaw += 360
+        
+    yaw = before['yaw'] + dyaw * ratio
+    if yaw > 180: yaw -= 360
+    elif yaw < -180: yaw += 360
+    
+    return {'roll': roll, 'pitch': pitch, 'yaw': yaw}
+
+def inject_xmp(image_path, roll, pitch, yaw):
+    try:
+        xmp_xml = f"""<?xpacket begin="\\ufeff" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description rdf:about=""
+      xmlns:Camera="http://www.indrones.com/camera/1.0/">
+      <Camera:Roll>{roll:.5f}</Camera:Roll>
+      <Camera:Pitch>{pitch:.5f}</Camera:Pitch>
+      <Camera:Yaw>{yaw:.5f}</Camera:Yaw>
+    </rdf:Description>
+  </rdf:RDF>
+</x:xmpmeta>
+<?xpacket end="w"?>"""
+        xmp_bytes = xmp_xml.encode('utf-8')
+        payload = b"http://ns.adobe.com/xap/1.0/\\x00" + xmp_bytes
+        length = len(payload) + 2
+        app1_segment = b'\\xff\\xe1' + length.to_bytes(2, 'big') + payload
+        
+        with open(image_path, 'rb') as f:
+            data = f.read()
+            
+        if data.startswith(b'\\xff\\xd8'):
+            new_data = b'\\xff\\xd8' + app1_segment + data[2:]
+            with open(image_path, 'wb') as f:
+                f.write(new_data)
+            return True
+    except Exception as e:
+        print(f"Error injecting XMP to {image_path}: {e}")
+    return False
 
 def generate_thumbnail_worker(img_data):
     try:
@@ -225,6 +317,8 @@ def generate_thumbnail_worker(img_data):
 
 def set_gps_exif_worker(img_data):
     success = set_gps_exif(img_data['path'], img_data['lat'], img_data['lng'], img_data['alt'])
+    if success:
+        inject_xmp(img_data['path'], img_data.get('roll', 0.0), img_data.get('pitch', 0.0), img_data.get('yaw', 0.0))
     return img_data['path'], success
 
 def benchmark_and_get_workers(worker_func, sample_items, task_name):
@@ -355,7 +449,8 @@ def create_kmz(tagged_images, output_path, image_dir):
         print(f"\nCritical Error creating KMZ: {e}")
 
 def main(bin_file, image_dir, alt_threshold=40.0):
-    gps_data, cam_data = parse_bin_log(bin_file)
+    gps_data, cam_data, att_data = parse_bin_log(bin_file)
+    att_keys = [x['TimeUS'] for x in att_data]
     
     if not gps_data:
         print("Error: No valid GPS data found in log.")
@@ -414,11 +509,15 @@ def main(bin_file, image_dir, alt_threshold=40.0):
         gps = interpolate_gps(gps_data, corrected_time)
         
         if gps:
+            att = interpolate_att(att_data, att_keys, gps['TimeUS'])
             tagged_images_data.append({
                 'path': img['path'],
                 'lat': gps['lat'],
                 'lng': gps['lng'],
-                'alt': gps['alt']
+                'alt': gps['alt'],
+                'roll': att['roll'],
+                'pitch': att['pitch'],
+                'yaw': att['yaw']
             })
             print(f"Calculated {os.path.basename(img['path'])} -> Lat: {gps['lat']:.6f}, Lng: {gps['lng']:.6f}")
         else:
@@ -429,6 +528,26 @@ def main(bin_file, image_dir, alt_threshold=40.0):
     if tagged_images_data:
         kmz_path = os.path.join(image_dir, "geotags.kmz")
         create_kmz(tagged_images_data, kmz_path, image_dir)
+        
+        csv_path = os.path.join(image_dir, "geotags.csv")
+        try:
+            with open(csv_path, 'w', newline='') as csvfile:
+                fieldnames = ['Filename', 'Latitude', 'Longitude', 'Altitude', 'Omega', 'Phi', 'Kappa']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                for img_data in tagged_images_data:
+                    writer.writerow({
+                        'Filename': os.path.basename(img_data['path']),
+                        'Latitude': f"{img_data['lat']:.7f}",
+                        'Longitude': f"{img_data['lng']:.7f}",
+                        'Altitude': f"{img_data['alt']:.2f}",
+                        'Omega': f"{img_data['roll']:.5f}",
+                        'Phi': f"{img_data['pitch']:.5f}",
+                        'Kappa': f"{img_data['yaw']:.5f}"
+                    })
+            print(f"Successfully generated CSV sidecar: {csv_path}")
+        except Exception as e:
+            print(f"Error creating CSV sidecar: {e}")
         
         print(f"\nPlease review the generated KMZ file: {kmz_path}")
         

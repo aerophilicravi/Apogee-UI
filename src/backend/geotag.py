@@ -14,6 +14,8 @@ import json
 import base64
 import re
 import shutil
+import csv
+import bisect
 
 # --- AUTO-INSTALLER FOR REQUIRED PACKAGES ---
 def install_package(package_name):
@@ -111,6 +113,8 @@ def set_gps_exif(image_path, lat, lng, alt):
         print(f"Error writing EXIF to {image_path}: {e}")
         return False
 
+
+
 def get_gps_time(gwk, gms):
     gps_epoch = datetime(1980, 1, 6)
     return gps_epoch + timedelta(weeks=gwk, milliseconds=gms)
@@ -125,9 +129,10 @@ def parse_bin_log(bin_file):
     mlog = mavutil.mavlink_connection(bin_file)
     gps_data = []
     cam_data = []
+    att_data = []
     print(f"Parsing {os.path.basename(bin_file)}...")
     while True:
-        msg = mlog.recv_match(type=['GPS', 'CAM'], blocking=False)
+        msg = mlog.recv_match(type=['GPS', 'CAM', 'ATT'], blocking=False)
         if msg is None:
             break
         msg_type = msg.get_type()
@@ -154,7 +159,22 @@ def parse_bin_log(bin_file):
             if gwk is not None and gms is not None:
                 dt = get_gps_time(gwk, gms)
             cam_data.append({'TimeUS': time_us, 'time': dt, 'lat': lat, 'lng': lng, 'alt': alt})
-    return gps_data, cam_data
+            
+        elif msg_type == 'ATT':
+            time_us = get_field(msg, ['TimeUS'])
+            roll = get_field(msg, ['Roll', 'roll'])
+            pitch = get_field(msg, ['Pitch', 'pitch'])
+            yaw = get_field(msg, ['Yaw', 'yaw'])
+            
+            if time_us is not None:
+                att_data.append({
+                    'TimeUS': time_us,
+                    'roll': float(roll) if roll is not None else 0.0,
+                    'pitch': float(pitch) if pitch is not None else 0.0,
+                    'yaw': float(yaw) if yaw is not None else 0.0
+                })
+                
+    return gps_data, cam_data, att_data
 
 def interpolate_gps(gps_data, target_time):
     if not gps_data:
@@ -175,9 +195,45 @@ def interpolate_gps(gps_data, target_time):
             return {
                 'lat': before['lat'] + (after['lat'] - before['lat']) * ratio,
                 'lng': before['lng'] + (after['lng'] - before['lng']) * ratio,
-                'alt': before['alt'] + (after['alt'] - before['alt']) * ratio
+                'alt': before['alt'] + (after['alt'] - before['alt']) * ratio,
+                'TimeUS': before['TimeUS'] + (after['TimeUS'] - before['TimeUS']) * ratio
             }
     return None
+
+def interpolate_att(att_data, att_keys, target_time_us):
+    if not att_data:
+        return {'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0}
+        
+    i = bisect.bisect_right(att_keys, target_time_us)
+    
+    if i == 0:
+        return att_data[0]
+    if i == len(att_data):
+        return att_data[-1]
+        
+    before = att_data[i-1]
+    after = att_data[i]
+    
+    dt_total = after['TimeUS'] - before['TimeUS']
+    if dt_total == 0:
+        return before
+        
+    ratio = (target_time_us - before['TimeUS']) / dt_total
+    
+    roll = before['roll'] + (after['roll'] - before['roll']) * ratio
+    pitch = before['pitch'] + (after['pitch'] - before['pitch']) * ratio
+    
+    dyaw = after['yaw'] - before['yaw']
+    if dyaw > 180:
+        dyaw -= 360
+    elif dyaw < -180:
+        dyaw += 360
+        
+    yaw = before['yaw'] + dyaw * ratio
+    if yaw > 180: yaw -= 360
+    elif yaw < -180: yaw += 360
+    
+    return {'roll': roll, 'pitch': pitch, 'yaw': yaw}
 
 def generate_thumbnail_worker(img_data):
     try:
@@ -316,7 +372,8 @@ def main():
         print(f"Error: No .bin flight log found in {image_dir}")
         return
     bin_file = bin_files[0]
-    gps_data, cam_data = parse_bin_log(bin_file)
+    gps_data, cam_data, att_data = parse_bin_log(bin_file)
+    att_keys = [x['TimeUS'] for x in att_data]
     if not cam_data:
         print("Error: No CAM messages found in log.")
         return
@@ -350,12 +407,42 @@ def main():
         corrected_time = img['time'] + time_offset
         gps = interpolate_gps(gps_data, corrected_time)
         if gps:
-            tagged_images_data.append({'path': img['path'], 'lat': gps['lat'], 'lng': gps['lng'], 'alt': gps['alt']})
+            att = interpolate_att(att_data, att_keys, gps['TimeUS'])
+            tagged_images_data.append({
+                'path': img['path'], 
+                'lat': gps['lat'], 
+                'lng': gps['lng'], 
+                'alt': gps['alt'],
+                'roll': att['roll'],
+                'pitch': att['pitch'],
+                'yaw': att['yaw']
+            })
             print(f"Synced {os.path.basename(img['path'])} -> MSL Alt: {gps['alt']:.2f}m")
     if tagged_images_data:
         kml_path = os.path.join(image_dir, "geotags.kml")
         create_kml(tagged_images_data, cam_data, kml_path, image_dir, multiprocess)
         finalize_kml_assets(image_dir)
+        
+        csv_path = os.path.join(image_dir, "geotags.csv")
+        try:
+            with open(csv_path, 'w', newline='') as csvfile:
+                fieldnames = ['Filename', 'Latitude', 'Longitude', 'Altitude', 'Omega', 'Phi', 'Kappa']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                for img_data in tagged_images_data:
+                    writer.writerow({
+                        'Filename': os.path.basename(img_data['path']),
+                        'Latitude': f"{img_data['lat']:.7f}",
+                        'Longitude': f"{img_data['lng']:.7f}",
+                        'Altitude': f"{img_data['alt']:.2f}",
+                        'Omega': f"{img_data['roll']:.5f}",
+                        'Phi': f"{img_data['pitch']:.5f}",
+                        'Kappa': f"{img_data['yaw']:.5f}"
+                    })
+            print(f"Successfully generated CSV sidecar: {csv_path}")
+        except Exception as e:
+            print(f"Error creating CSV sidecar: {e}")
+            
         if auto_write or args.exif_only:
             print("\nStarting EXIF Injector...")
             workers = min(multiprocessing.cpu_count() or 2, 8) if multiprocess else 1
