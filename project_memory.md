@@ -1,21 +1,19 @@
 # Project Memory & Context Anchor
 
 ## 🎯 Current Goal
-Finalize standalone packaging with code obfuscation and deploy as a single portable .exe with no external dependencies. Field validation of v0.2.0 features.
+Field validation and distribution of the portable v0.2.2 executable. Collect feedback on MSL alignment and 2.5D map performance.
 
 ## 🏗️ Technical Implementation (Active)
-- **Frontend**: Next.js (React) + **MapLibre GL JS** (replacing Leaflet). Implements 2.5D rendering with 3D terrain support and a toggleable 2D/3D perspective.
-- **Backend**: Python (`geotag.py`) processing engine using `pymavlink` for log parsing and `Pillow` for branded thumbnail generation.
-- **Bridge**: Electron IPC handlers (`main.js`) managing the lifecycle of the processing engine and KML metadata extraction.
-- **Standardization**: MSL (Mean Sea Level) altitude is the universal standard for all coordinates across processing, UI, and exports.
-- **Branding**: Watermarked thumbnails, dynamic KML naming (based on folder suffix), and established Windows executable metadata.
+- **Frontend**: Next.js (React) + **MapLibre GL JS**. Implements 2.5D rendering with 3D terrain support.
+- **Backend**: Python (`geotag.py`) processing engine using `pymavlink` and `Pillow`.
+- **Bridge**: Electron IPC handlers (`main.js`) with **JS obfuscation** for intellectual property protection.
+- **Packaging**: **Portable .exe** (Win64) bundling all dependencies including the Python runtime.
 
 ## 📜 History of Implementation
-1.  **Phase 1-11**: (See previous logs for foundation, core processing, diagnostic visualization, branding, MSL standardization, and telemetry v0.2.0).
-12. **Phase 12: 2.5D Mapping Engine & Packaging**: Migrated from Leaflet to **MapLibre GL JS** to support terrain visualization. Integrated **MapTiler** for hybrid satellite/terrain data. Successfully packaged as a standalone portable .exe (**v0.2.0**) using `npm run dist:win`, including JS obfuscation and PyInstaller backend integration.
+1.  **Phase 1-12**: (See previous logs for foundation, core processing, diagnostic visualization, branding, MSL standardization, and v0.2.0 packaging).
+13. **Phase 13: v0.2.2 Production Build**: Completed full production pipeline: Next.js static export, Electron script obfuscation, Python backend compilation (PyInstaller), and final packaging via `electron-builder`. Result: `Apogee 0.2.2.exe`.
 
 ## ⚠️ Known Issues / Technical Debt
-- **Build Efficiency**: The current development cycle requires full production rebuilds to verify certain metadata changes.
-- **Resource Scope**: Absolute paths for branding assets (logo.png) are used.
-- **Error Handling**: Missing logo assets or corrupted BIN logs currently trigger basic usage errors.
+- **Thumbnail Projection**: Brainstormed ground projection feature (Roll/Pitch/Yaw based) was deferred in favor of a production build release.
 - **MapTiler Key**: The implementation requires a valid `MAPTILER_KEY` to be set in `MapUI.tsx` for production use.
+- **Error Handling**: Missing logo assets or corrupted BIN logs currently trigger basic usage errors.
