@@ -4,7 +4,7 @@
 
 A high-performance desktop application that seamlessly aligns drone photos with GPS/altitude data from MAVLink flight logs, featuring a professional-grade 2.5D mapping engine for mission verification.
 
-![Version](https://img.shields.io/badge/version-0.2.2-emerald) ![Author](https://img.shields.io/badge/author-Indrones%20Solutions%20Pvt.%20Ltd.-blue) ![License](https://img.shields.io/badge/license-Private-red)
+![Version](https://img.shields.io/badge/version-0.2.2-emerald) ![Author](https://img.shields.io/badge/author-Ravi%20Singh.-blue) ![License](https://img.shields.io/badge/license-MIT-red)
 
 ---
 
