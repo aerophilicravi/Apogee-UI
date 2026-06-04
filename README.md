@@ -107,15 +107,4 @@ Apogee uses MapTiler for high-resolution satellite imagery and 3D terrain.
 
 ---
 
-## 📄 License
-
-**Private Software** - Developed by Indrones Solutions Pvt. Ltd.
-All rights reserved. Proprietary and confidential.
-
-*Built with ❤️ for professional aerial surveying*
- surveys simultaneously with independent status tracking
-5. **MAVLink Expertise**: Robust parsing of drone flight logs with altitude-based filtering
-
----
-
 *Built with ❤️ for professional aerial surveying*
